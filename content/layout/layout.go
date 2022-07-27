@@ -18,8 +18,10 @@ import (
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/uor-framework/uor-client-go/content"
+	"github.com/uor-framework/uor-client-go/model"
 	"github.com/uor-framework/uor-client-go/model/nodes/collection"
 	"github.com/uor-framework/uor-client-go/model/nodes/descriptor"
+	"github.com/uor-framework/uor-client-go/model/traversal"
 	"github.com/uor-framework/uor-client-go/ocimanifest"
 )
 
@@ -86,7 +88,7 @@ func (l *Layout) Exists(ctx context.Context, desc ocispec.Descriptor) (bool, err
 func (l *Layout) Resolve(ctx context.Context, reference string) (ocispec.Descriptor, error) {
 	desc, ok := l.resolver.Load(reference)
 	if !ok {
-		return ocispec.Descriptor{}, fmt.Errorf("descriptor for reference %s is not stored", reference)
+		return ocispec.Descriptor{}, &content.ErrNotStored{Reference: reference}
 	}
 	return desc.(ocispec.Descriptor), nil
 }
@@ -102,6 +104,36 @@ func (l *Layout) Predecessors(_ context.Context, node ocispec.Descriptor) ([]oci
 		}
 	}
 	return predecessors, nil
+}
+
+// ResolveByAttribute returns descriptors linked to the reference that satisfy the specified matcher.
+// Matcher is expected to compare attributes of nodes to set criteria. If the matcher is nil, return values
+// are nil.
+func (l *Layout) ResolveByAttribute(ctx context.Context, reference string, matcher model.Matcher) ([]ocispec.Descriptor, error) {
+	if matcher == nil {
+		return nil, nil
+	}
+
+	var res []ocispec.Descriptor
+	desc, err := l.Resolve(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	node := l.graph.NodeByID(desc.Digest.String())
+	if node == nil {
+		return nil, fmt.Errorf("node %q does not exist in graph", reference)
+	}
+	err = traversal.Walk(node, l.graph, func(_ traversal.Tracker, n model.Node) error {
+		if matcher.Matches(n) {
+			desc, ok := n.(*descriptor.Node)
+			if ok {
+				res = append(res, desc.Descriptor())
+			}
+		}
+		return nil
+	})
+	return res, err
 }
 
 // ResolveLinks returns linked collection references for a collection. If the collection
