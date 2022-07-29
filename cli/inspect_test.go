@@ -144,7 +144,8 @@ func TestInspectRun(t *testing.T) {
 
 			if c.opts.cacheDir == "" {
 				c.opts.cacheDir = cache
-				prepCache(c.opts.Source, cache, c.annotations)
+				err := prepCache(c.opts.Source, cache, c.annotations)
+				require.NoError(t, err)
 			}
 
 			out := new(strings.Builder)

@@ -16,7 +16,7 @@ import (
 	"github.com/uor-framework/uor-client-go/util/examples"
 )
 
-// PullOptions describe configuration options that can
+// InspectOptions describe configuration options that can
 // be set using the pull subcommand.
 type InspectOptions struct {
 	*RootOptions
@@ -37,7 +37,7 @@ var clientInspectExamples = []examples.Example{
 	},
 }
 
-// NewPullCmd creates a new cobra.Command for the pull subcommand.
+// NewInspectCmd creates a new cobra.Command for the inspect subcommand.
 func NewInspectCmd(rootOpts *RootOptions) *cobra.Command {
 	o := InspectOptions{RootOptions: rootOpts}
 
@@ -87,12 +87,12 @@ func (o *InspectOptions) Run(ctx context.Context) error {
 		return err
 	}
 
-	return o.formatDescriptors(o.IOStreams.Out, descs)
+	return formatDescriptors(o.IOStreams.Out, o.Source, descs)
 }
 
-func (o *InspectOptions) formatDescriptors(w io.Writer, descs []ocispec.Descriptor) error {
-	tw := tabwriter.NewWriter(o.IOStreams.Out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintf(tw, "Listing matching descriptors for source:\t%s\n", o.Source); err != nil {
+func formatDescriptors(w io.Writer, source string, descs []ocispec.Descriptor) error {
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintf(tw, "Listing matching descriptors for source:\t%s\n", source); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(tw, "Name\tDigest\tSize\tMediaType"); err != nil {

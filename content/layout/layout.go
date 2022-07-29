@@ -85,7 +85,7 @@ func (l *Layout) Exists(ctx context.Context, desc ocispec.Descriptor) (bool, err
 }
 
 // Resolve resolves a reference to a descriptor.
-func (l *Layout) Resolve(ctx context.Context, reference string) (ocispec.Descriptor, error) {
+func (l *Layout) Resolve(_ context.Context, reference string) (ocispec.Descriptor, error) {
 	desc, ok := l.resolver.Load(reference)
 	if !ok {
 		return ocispec.Descriptor{}, &content.ErrNotStored{Reference: reference}
