@@ -1,5 +1,8 @@
 kind: DataSetConfiguration
 apiVersion: client.uor-framework.io/v1alpha1
+linkedCollections:
+- localhost:5001/test:latest
+schemaAddress: localhost:5001/schema:latest
 files:
   - file: "*.jpg"
     attributes:
@@ -13,4 +16,4 @@ files:
       bool: true
   - file: fish.jpg"
     attributes:
-      custom1: customval
+      size: large

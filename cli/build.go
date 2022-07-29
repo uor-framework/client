@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -15,6 +14,8 @@ import (
 	"github.com/uor-framework/uor-client-go/builder/api/v1alpha1"
 	load "github.com/uor-framework/uor-client-go/builder/config"
 	"github.com/uor-framework/uor-client-go/content/layout"
+	"github.com/uor-framework/uor-client-go/ocimanifest"
+	"github.com/uor-framework/uor-client-go/registryclient"
 	"github.com/uor-framework/uor-client-go/registryclient/orasclient"
 	"github.com/uor-framework/uor-client-go/util/examples"
 	"github.com/uor-framework/uor-client-go/util/workspace"
@@ -27,6 +28,9 @@ type BuildOptions struct {
 	RootDir     string
 	DSConfig    string
 	Destination string
+	Insecure    bool
+	PlainHTTP   bool
+	Configs     []string
 }
 
 var clientBuildExamples = []examples.Example{
@@ -60,7 +64,10 @@ func NewBuildCmd(rootOpts *RootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&o.DSConfig, "dsconfig", "", o.DSConfig, "DataSet config path")
+	cmd.Flags().StringVarP(&o.DSConfig, "dsconfig", "", o.DSConfig, "dataset config path")
+	cmd.Flags().StringArrayVarP(&o.Configs, "configs", "c", o.Configs, "auth config paths when contacting registries")
+	cmd.Flags().BoolVarP(&o.Insecure, "insecure", "", o.Insecure, "allow connections to registries SSL registry without certs")
+	cmd.Flags().BoolVarP(&o.PlainHTTP, "plain-http", "", o.PlainHTTP, "use plain http and not https when contacting registries")
 
 	return cmd
 }
@@ -88,12 +95,16 @@ func (o *BuildOptions) Run(ctx context.Context) error {
 		return err
 	}
 
-	cache, err := layout.New(o.cacheDir)
+	cache, err := layout.New(ctx, o.cacheDir)
 	if err != nil {
 		return err
 	}
 
-	client, err := orasclient.NewClient()
+	client, err := orasclient.NewClient(
+		orasclient.SkipTLSVerify(o.Insecure),
+		orasclient.WithAuthConfigs(o.Configs),
+		orasclient.WithPlainHTTP(o.PlainHTTP),
+	)
 	if err != nil {
 		return fmt.Errorf("error configuring client: %v", err)
 	}
@@ -115,6 +126,7 @@ func (o *BuildOptions) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	var config v1alpha1.DataSetConfiguration
 	if len(o.DSConfig) > 0 {
 		config, err = load.ReadConfig(o.DSConfig)
@@ -144,18 +156,36 @@ func (o *BuildOptions) Run(ctx context.Context) error {
 		return err
 	}
 
+	descs, err = ocimanifest.UpdateLayerDescriptors(descs, config)
+	if err != nil {
+		return err
+	}
+
+	linkedDescs, linkedSchemas, err := gatherLinkedCollections(ctx, config, client)
+	if err != nil {
+		return err
+	}
+
+	descs = append(descs, linkedDescs...)
+
 	// Add the attributes from the config to their respective blocks
-	descs, err = AddDescriptors(descs, config)
+	configDesc, err := client.AddContent(ctx, ocimanifest.UORConfigMediaType, []byte("{}"), nil)
 	if err != nil {
 		return err
 	}
 
-	configDesc, err := client.AddContent(ctx, orasclient.UorConfigMediaType, []byte("{}"), nil)
-	if err != nil {
-		return err
+	// Write the root collection attributes
+	manifestAnnotations := map[string]string{}
+	if config.SchemaAddress != "" {
+		manifestAnnotations[ocimanifest.AnnotationSchema] = config.SchemaAddress
 	}
 
-	_, err = client.AddManifest(ctx, o.Destination, configDesc, nil, descs...)
+	if len(linkedDescs) > 0 {
+		manifestAnnotations[ocimanifest.AnnotationSchemaLinks] = formatLinks(linkedSchemas)
+		manifestAnnotations[ocimanifest.AnnotationCollectionLinks] = formatLinks(config.LinkedCollections)
+	}
+
+	_, err = client.AddManifest(ctx, o.Destination, configDesc, manifestAnnotations, descs...)
 	if err != nil {
 		return err
 	}
@@ -170,36 +200,44 @@ func (o *BuildOptions) Run(ctx context.Context) error {
 	return client.Destroy()
 }
 
-// AddDescriptors adds the attributes of each file listed in the config
-// to the annotations of its respective descriptor.
-func AddDescriptors(d []ocispec.Descriptor, c v1alpha1.DataSetConfiguration) ([]ocispec.Descriptor, error) {
-	// For each descriptor
-	for i1, desc := range d {
-		// Get the filename of the block
-		filename := desc.Annotations[ocispec.AnnotationTitle]
-		// For each file in the config
-		for i2, file := range c.Files {
-			// If the config has a grouping declared, make a valid regex.
-			if strings.Contains(file.File, "*") && !strings.Contains(file.File, ".*") {
-				file.File = strings.Replace(file.File, "*", ".*", -1)
-			} else {
-				file.File = strings.Replace(file.File, file.File, "^"+file.File+"$", -1)
-			}
-			namesearch, err := regexp.Compile(file.File)
-			if err != nil {
-				return []ocispec.Descriptor{}, err
-			}
-			// Find the matching descriptor
-			if namesearch.Match([]byte(filename)) {
-				// Get the k/v pairs from the config and add them to the block's annotations.
-				for k, v := range c.Files[i2].Attributes {
-					d[i1].Annotations[k] = v
-				}
-			} else {
-				// If the block does not have a corresponding config element, skip it.
-				continue
-			}
+// gatherLinkedCollections create null descriptors to denotes linked collections in a manifest with schema link information.
+func gatherLinkedCollections(ctx context.Context, cfg v1alpha1.DataSetConfiguration, client registryclient.Client) ([]ocispec.Descriptor, []string, error) {
+	var allLinkedSchemas []string
+	var linkedDescs []ocispec.Descriptor
+	for _, collection := range cfg.LinkedCollections {
+		schema, linkedSchemas, err := ocimanifest.FetchSchema(ctx, collection, client)
+		if err != nil {
+			return nil, nil, err
 		}
+
+		if len(linkedSchemas) != 0 {
+			allLinkedSchemas = append(allLinkedSchemas, linkedSchemas...)
+		}
+
+		allLinkedSchemas = append(allLinkedSchemas, schema)
+
+		annotations := map[string]string{
+			ocimanifest.AnnotationSchema:      schema,
+			ocimanifest.AnnotationSchemaLinks: formatLinks(linkedSchemas),
+		}
+		// The bytes contain the collection name to keep the blobs unique within the manifest
+		desc, err := client.AddContent(ctx, ocispec.MediaTypeImageLayer, []byte(collection), annotations)
+		if err != nil {
+			return nil, nil, err
+		}
+		linkedDescs = append(linkedDescs, desc)
 	}
-	return d, nil
+	return linkedDescs, allLinkedSchemas, nil
+}
+
+func formatLinks(links []string) string {
+	n := len(links)
+	switch {
+	case n == 1:
+		return links[0]
+	case n > 1:
+		return strings.Join(links, ocimanifest.Separator)
+	default:
+		return ""
+	}
 }

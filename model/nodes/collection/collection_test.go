@@ -255,7 +255,6 @@ func TestCollection_Attributes(t *testing.T) {
 
 	cases := []spec{
 		{
-			// TODO(jpower432)
 			name: "Success/RootExists",
 			nodes: []model.Node{
 				&testutils.MockNode{

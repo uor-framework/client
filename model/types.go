@@ -1,5 +1,32 @@
 package model
 
+// DirectedGraph defines methods for interacting with groups of
+// nodes and edges in a directed graph structure. This graph may
+// or may not contain cycles.
+type DirectedGraph interface {
+	// Nodes lists all nodes contained within the
+	// graph.
+	Nodes() []Node
+	// Edges lists all edges contained within the
+	// graph.
+	Edges() []Edge
+	// NodeByID returns a node from the given
+	// id, if existing.
+	NodeByID(string) Node
+	// Edge creates or returns an Edge from the given
+	// node ids.
+	Edge(string, string) Edge
+	// HasEdgeFromTo returns whether an edge exits between
+	// two nodes.
+	HasEdgeFromTo(string, string) bool
+	// From lists all child nodes for a given node
+	// id, if existing.
+	From(string) []Node
+	// To lists all parent nodes for a given node
+	// id, if existing.
+	To(string) []Node
+}
+
 // Rooted defines methods to locate the root of the
 // data set.
 type Rooted interface {

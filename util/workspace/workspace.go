@@ -6,10 +6,6 @@ import (
 	"path/filepath"
 )
 
-// TODO(jpower432): Implement Workspace for a remote context
-// with an underlying FS (RoadMap Item?). This would be implemented
-// if the inputs include a declarative config.
-
 // Workspace defines methods for accessing and publishing
 // files in a local context.
 type Workspace interface {
