@@ -49,9 +49,9 @@ func NewPushCmd(rootOpts *RootOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringArrayVarP(&o.Configs, "configs", "c", o.Configs, "auth config paths")
-	cmd.Flags().BoolVarP(&o.Insecure, "insecure", "", o.Insecure, "allow connections to SSL registry without certs")
-	cmd.Flags().BoolVarP(&o.PlainHTTP, "plain-http", "", o.PlainHTTP, "use plain http and not https")
+	cmd.Flags().StringArrayVarP(&o.Configs, "configs", "c", o.Configs, "auth config paths when contacting registries")
+	cmd.Flags().BoolVarP(&o.Insecure, "insecure", "", o.Insecure, "allow connections to registries SSL registry without certs")
+	cmd.Flags().BoolVarP(&o.PlainHTTP, "plain-http", "", o.PlainHTTP, "use plain http and not https when contacting registries")
 
 	return cmd
 }
@@ -78,7 +78,7 @@ func (o *PushOptions) Run(ctx context.Context) error {
 		return err
 	}
 
-	cache, err := layout.New(o.cacheDir)
+	cache, err := layout.NewWithContext(ctx, o.cacheDir)
 	if err != nil {
 		return err
 	}

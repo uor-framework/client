@@ -2,6 +2,7 @@ package registryclient
 
 import (
 	"context"
+	"io"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -24,6 +25,8 @@ type Remote interface {
 	// Pull pulls an artifact from a remote registry to a local
 	// content store.
 	Pull(context.Context, string, content.Store) (ocispec.Descriptor, error)
+	// GetManifest retrieves the root manifest for a reference.
+	GetManifest(context.Context, string) (ocispec.Descriptor, io.ReadCloser, error)
 }
 
 // Local defines methods to interact with OCI artifacts

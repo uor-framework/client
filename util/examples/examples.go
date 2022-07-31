@@ -7,7 +7,7 @@ import (
 	"k8s.io/kubectl/pkg/util/templates"
 )
 
-// Examples defines fields required to construct
+// Example defines fields required to construct
 // a CLI command example
 type Example struct {
 	Descriptions  []string

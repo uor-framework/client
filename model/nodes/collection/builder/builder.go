@@ -12,8 +12,8 @@ type collectionBuilder struct {
 	edges []model.Edge
 }
 
-// NewBuilder returns a builder for collection nodes.
-func NewBuilder(nodes []model.Node, edges []model.Edge) model.NodeBuilder {
+// New returns a builder for collection nodes.
+func New(nodes []model.Node, edges []model.Edge) model.NodeBuilder {
 	return &collectionBuilder{
 		nodes: nodes,
 		edges: edges,

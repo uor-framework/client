@@ -11,12 +11,10 @@ import (
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/registry"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	"github.com/uor-framework/uor-client-go/cli/log"
-	"github.com/uor-framework/uor-client-go/content/layout"
 )
 
 func TestPushComplete(t *testing.T) {
@@ -102,11 +100,11 @@ func TestPushRun(t *testing.T) {
 					Logger:   testlogr,
 					cacheDir: "testdata/cache",
 				},
-				Destination: "locahost:5001/client-flat-test:latest",
+				Destination: "localhost:5001/client-flat-test:latest",
 				PlainHTTP:   true,
 			},
-			expError: "error publishing content to locahost:5001/client-flat-test:latest:" +
-				" descriptor for reference locahost:5001/client-flat-test:latest is not stored",
+			expError: "error publishing content to localhost:5001/client-flat-test:latest:" +
+				" descriptor for reference localhost:5001/client-flat-test:latest is not stored",
 		},
 	}
 
@@ -117,7 +115,8 @@ func TestPushRun(t *testing.T) {
 
 			if c.opts.cacheDir == "" {
 				c.opts.cacheDir = cache
-				prepCache(t, c.opts.Destination, cache)
+				err := prepCache(c.opts.Destination, cache, nil)
+				require.NoError(t, err)
 			}
 
 			err := c.opts.Run(context.TODO())
@@ -128,34 +127,4 @@ func TestPushRun(t *testing.T) {
 			}
 		})
 	}
-}
-
-// prepCache will push a hello.txt artifact into the
-// cache for retrieval. Uses methods from oras-go.
-func prepCache(t *testing.T, ref string, cacheDir string) {
-	fileName := "hello.txt"
-	fileContent := []byte("Hello World!\n")
-	ctx := context.TODO()
-
-	ociStore, err := layout.New(cacheDir)
-	require.NoError(t, err)
-	layerDesc, err := pushBlob(ctx, ocispec.MediaTypeImageLayer, fileContent, ociStore)
-	require.NoError(t, err)
-	if layerDesc.Annotations == nil {
-		layerDesc.Annotations = map[string]string{}
-	}
-	layerDesc.Annotations[ocispec.AnnotationTitle] = fileName
-
-	config := []byte("{}")
-	configDesc, err := pushBlob(ctx, ocispec.MediaTypeImageConfig, config, ociStore)
-	require.NoError(t, err)
-
-	manifest, err := generateManifest(configDesc, layerDesc)
-	require.NoError(t, err)
-
-	manifestDesc, err := pushBlob(ctx, ocispec.MediaTypeImageManifest, manifest, ociStore)
-	require.NoError(t, err)
-
-	require.NoError(t, ociStore.Tag(ctx, manifestDesc, ref))
-
 }

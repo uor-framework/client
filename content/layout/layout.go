@@ -18,45 +18,51 @@ import (
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/uor-framework/uor-client-go/content"
+	"github.com/uor-framework/uor-client-go/model/nodes/collection"
+	"github.com/uor-framework/uor-client-go/model/nodes/descriptor"
+	"github.com/uor-framework/uor-client-go/ocimanifest"
 )
 
 var (
-	_ content.Store = &Layout{}
+	_ content.Store      = &Layout{}
+	_ content.GraphStore = &Layout{}
 )
 
 const indexFile = "index.json"
 
 // Layout implements the storage interface by wrapping the oras
 // content.Storage.
-// TODO(jpower432): add graph structure implementation once
-// imported collection work is completed to effectively
-// manage the index.json. Similar to https://github.com/oras-project/oras-go/tree/main/internal/graph
-// but the edge calculations will be UOR specific because descriptor are not only linked in the OCI DAG
-// structure, but there are relationships between the each of those graph based on annotations.
 type Layout struct {
-	internal         orascontent.Storage
-	descriptorLookup sync.Map // map[string]ocispec.Descriptor
-	index            *ocispec.Index
-	rootPath         string
+	internal orascontent.Storage
+	resolver sync.Map // map[string]ocispec.Descriptor
+	graph    *collection.Collection
+	index    *ocispec.Index
+	rootPath string
+	mu       sync.Mutex
 }
 
-// New initializes a new local file store in an OCI layout format.
 func New(rootPath string) (*Layout, error) {
+	return NewWithContext(context.Background(), rootPath)
+}
+
+// NewWithContext initializes a new local file store in an OCI layout format.
+func NewWithContext(ctx context.Context, rootPath string) (*Layout, error) {
 	l := &Layout{
-		internal:         oci.NewStorage(rootPath),
-		descriptorLookup: sync.Map{},
-		rootPath:         filepath.Clean(rootPath),
+		internal: oci.NewStorage(rootPath),
+		resolver: sync.Map{},
+		graph:    collection.New(rootPath),
+		rootPath: filepath.Clean(rootPath),
 	}
 
-	return l, l.init()
+	return l, l.init(ctx)
 }
 
 // init performs initial layout checks and loads the index.
-func (l *Layout) init() error {
+func (l *Layout) init(ctx context.Context) error {
 	if err := l.validateOCILayoutFile(); err != nil {
 		return err
 	}
-	return l.loadIndex()
+	return l.loadIndex(ctx)
 }
 
 // Fetch fetches the content identified by the descriptor.
@@ -66,7 +72,13 @@ func (l *Layout) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.ReadClo
 
 // Push pushes the content, matching the expected descriptor.
 func (l *Layout) Push(ctx context.Context, desc ocispec.Descriptor, content io.Reader) error {
-	return l.internal.Push(ctx, desc, content)
+	if err := l.internal.Push(ctx, desc, content); err != nil {
+		return err
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return addManifest(ctx, l.graph, l.internal, desc)
 }
 
 // Exists returns whether a descriptor exits in the file store.
@@ -76,11 +88,47 @@ func (l *Layout) Exists(ctx context.Context, desc ocispec.Descriptor) (bool, err
 
 // Resolve resolves a reference to a descriptor.
 func (l *Layout) Resolve(_ context.Context, reference string) (ocispec.Descriptor, error) {
-	desc, ok := l.descriptorLookup.Load(reference)
+	desc, ok := l.resolver.Load(reference)
 	if !ok {
 		return ocispec.Descriptor{}, &content.ErrNotStored{Reference: reference}
 	}
 	return desc.(ocispec.Descriptor), nil
+}
+
+// Predecessors returns the nodes directly pointing to the current node.
+func (l *Layout) Predecessors(_ context.Context, node ocispec.Descriptor) ([]ocispec.Descriptor, error) {
+	var predecessors []ocispec.Descriptor
+	nodes := l.graph.To(node.Digest.String())
+	for _, n := range nodes {
+		desc, ok := n.(*descriptor.Node)
+		if ok {
+			predecessors = append(predecessors, desc.Descriptor())
+		}
+	}
+	return predecessors, nil
+}
+
+// ResolveLinks returns linked collection references for a collection. If the collection
+// has no links, a structured error is returned.
+func (l *Layout) ResolveLinks(ctx context.Context, reference string) ([]string, error) {
+	desc, err := l.Resolve(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	r, err := l.Fetch(ctx, desc)
+	if err != nil {
+		return nil, err
+	}
+	var manifest ocispec.Manifest
+	if err := json.NewDecoder(r).Decode(&manifest); err != nil {
+		return nil, err
+	}
+	links, ok := manifest.Annotations[ocimanifest.AnnotationCollectionLinks]
+	if !ok || len(links) == 0 {
+		return nil, ocimanifest.ErrNoCollectionLinks
+	}
+	splitLinks := strings.Split(links, ocimanifest.Separator)
+	return splitLinks, nil
 }
 
 // Tag tags a descriptor with a reference string.
@@ -104,7 +152,7 @@ func (l *Layout) Tag(ctx context.Context, desc ocispec.Descriptor, reference str
 	}
 	desc.Annotations[ocispec.AnnotationRefName] = reference
 
-	l.descriptorLookup.Store(reference, desc)
+	l.resolver.Store(reference, desc)
 
 	return l.SaveIndex()
 }
@@ -118,7 +166,7 @@ func (l *Layout) Index() (ocispec.Index, error) {
 func (l *Layout) SaveIndex() error {
 	// first need to update the index
 	var descs []ocispec.Descriptor
-	l.descriptorLookup.Range(func(key, value interface{}) bool {
+	l.resolver.Range(func(key, value interface{}) bool {
 		desc := value.(ocispec.Descriptor)
 		if desc.Annotations == nil {
 			desc.Annotations = map[string]string{}
@@ -138,7 +186,7 @@ func (l *Layout) SaveIndex() error {
 
 // loadIndex loads all information from the index.json
 // into the resolver and graph.
-func (l *Layout) loadIndex() error {
+func (l *Layout) loadIndex(ctx context.Context) error {
 	path := filepath.Join(l.rootPath, indexFile)
 	indexFile, err := os.Open(path)
 	if err != nil {
@@ -162,8 +210,14 @@ func (l *Layout) loadIndex() error {
 	for _, d := range l.index.Manifests {
 		key, ok := d.Annotations[ocispec.AnnotationRefName]
 		if ok {
-			l.descriptorLookup.Store(key, d)
+			l.resolver.Store(key, d)
 		}
+
+		l.mu.Lock()
+		if err := ManifestToCollection(ctx, l.graph, l.internal, d); err != nil {
+			return err
+		}
+		l.mu.Unlock()
 	}
 
 	return nil

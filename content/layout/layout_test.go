@@ -124,10 +124,11 @@ func TestTag(t *testing.T) {
 
 func TestSaveIndex(t *testing.T) {
 	cacheDir := t.TempDir()
+
 	l, err := New(cacheDir)
 	require.NoError(t, err)
 
-	l.descriptorLookup.Store("test", ocispec.Descriptor{})
+	l.resolver.Store("test", ocispec.Descriptor{})
 	require.NoError(t, l.SaveIndex())
 
 	_, err = os.Stat(filepath.Join(cacheDir, indexFile))
@@ -146,6 +147,7 @@ func TestResolve(t *testing.T) {
 	cacheDir := "testdata/valid"
 	l, err := New(cacheDir)
 	require.NoError(t, err)
+
 	type spec struct {
 		name     string
 		ref      string
@@ -186,10 +188,11 @@ func TestResolve(t *testing.T) {
 
 func TestLoadIndex(t *testing.T) {
 	cacheDir := "testdata/valid"
+	ctx := context.TODO()
 	l, err := New(cacheDir)
 	require.NoError(t, err)
 
-	require.NoError(t, l.loadIndex())
+	require.NoError(t, l.loadIndex(ctx))
 
 	ii, err := l.Index()
 	require.NoError(t, err)
@@ -225,6 +228,69 @@ func TestValidateOCILayoutFile(t *testing.T) {
 				require.EqualError(t, err, c.expError)
 			} else {
 				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestPredecessors(t *testing.T) {
+	cacheDir := "testdata/valid"
+	expected := []ocispec.Descriptor{{
+		MediaType:   "application/vnd.oci.image.manifest.v1+json",
+		Digest:      "sha256:473f7d69dbc51105aff4bb2f7ec80e27402d2f40c3e9a076e8c773b15969eadf",
+		Size:        1013,
+		Annotations: map[string]string{"org.opencontainers.image.ref.name": "localhost:5001/test:latest"},
+	}}
+	ctx := context.TODO()
+	l, err := New(cacheDir)
+	require.NoError(t, err)
+
+	desc := ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    "sha256:5c29ebcf4a3e7ac6dca6dcea98b4fa98de57c4aca65fa0b49989fbeab1dfdf84",
+		Size:      32,
+	}
+	pre, err := l.Predecessors(ctx, desc)
+	require.NoError(t, err)
+	require.Equal(t, expected, pre)
+
+}
+
+func TestResolveLinks(t *testing.T) {
+	type spec struct {
+		name     string
+		cacheDir string
+		ref      string
+		expRes   []string
+		expError string
+	}
+
+	cases := []spec{
+		{
+			name:     "Success/OCILayoutFileWithCorrectVersion",
+			cacheDir: "testdata/attributes",
+			ref:      "localhost:5001/test3:latest",
+			expRes:   []string{"localhost:5001/test1:latest"},
+		},
+		{
+			name:     "Failure/NoCollectionLinks",
+			cacheDir: "testdata/valid",
+			ref:      "localhost:5001/test:latest",
+			expError: "no collection links",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.TODO()
+			l, err := NewWithContext(ctx, c.cacheDir)
+			require.NoError(t, err)
+			res, err := l.ResolveLinks(ctx, c.ref)
+			if c.expError != "" {
+				require.EqualError(t, err, c.expError)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, c.expRes, res)
 			}
 		})
 	}

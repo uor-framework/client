@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"oras.land/oras-go/v2/content/file"
 	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/uor-framework/uor-client-go/ocimanifest"
 )
 
 func TestAddFiles(t *testing.T) {
@@ -29,6 +31,18 @@ func TestAddFiles(t *testing.T) {
 	})
 }
 
+func TestAddContent(t *testing.T) {
+	t.Run("Success/OneArtifact", func(t *testing.T) {
+		ctx := context.TODO()
+		expDigest := "sha256:cf80cd8aed482d5d1527d7dc72fceff84e6326592848447d2dc0b0e87dfc9a90"
+		c, err := NewClient(WithPlainHTTP(true))
+		require.NoError(t, err)
+		desc, err := c.AddContent(ctx, "", []byte("testing"), nil)
+		require.NoError(t, err)
+		require.Equal(t, expDigest, desc.Digest.String())
+	})
+}
+
 // TODO(jpower432): Create a mock client to mock non-tested actions
 func TestAddManifest(t *testing.T) {
 	t.Run("Success/OneArtifact", func(t *testing.T) {
@@ -39,7 +53,7 @@ func TestAddManifest(t *testing.T) {
 		require.NoError(t, err)
 		desc, err := c.AddFiles(ctx, "", testdata)
 		require.NoError(t, err)
-		configDesc, err := c.AddContent(ctx, UorConfigMediaType, []byte("{}"), nil)
+		configDesc, err := c.AddContent(ctx, ocimanifest.UORConfigMediaType, []byte("{}"), nil)
 		require.NoError(t, err)
 		mdesc, err := c.AddManifest(ctx, "localhost:5000/test:latest", configDesc, nil, desc...)
 		require.NoError(t, err)
@@ -67,7 +81,7 @@ func TestPushPull(t *testing.T) {
 		require.NoError(t, err)
 		descs, err := c.AddFiles(ctx, "", testdata)
 		require.NoError(t, err)
-		configDesc, err := c.AddContent(ctx, UorConfigMediaType, []byte("{}"), nil)
+		configDesc, err := c.AddContent(ctx, ocimanifest.UORConfigMediaType, []byte("{}"), nil)
 		require.NoError(t, err)
 
 		mdesc, err := c.AddManifest(ctx, ref, configDesc, nil, descs...)
@@ -89,7 +103,7 @@ func TestPushPull(t *testing.T) {
 		require.NoError(t, err)
 		descs, err := c.AddFiles(ctx, "", testdata)
 		require.NoError(t, err)
-		configDesc, err := c.AddContent(ctx, UorConfigMediaType, []byte("{}"), nil)
+		configDesc, err := c.AddContent(ctx, ocimanifest.UORConfigMediaType, []byte("{}"), nil)
 		require.NoError(t, err)
 
 		mdesc, err := c.AddManifest(ctx, ref, configDesc, nil, descs...)
@@ -131,7 +145,7 @@ func TestPushPull(t *testing.T) {
 		require.NoError(t, err)
 		descs, err := c.AddFiles(ctx, "", testdata)
 		require.NoError(t, err)
-		configDesc, err := c.AddContent(ctx, UorConfigMediaType, []byte("{}"), nil)
+		configDesc, err := c.AddContent(ctx, ocimanifest.UORConfigMediaType, []byte("{}"), nil)
 		require.NoError(t, err)
 
 		source, err := c.Store()
